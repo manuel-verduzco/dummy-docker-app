@@ -35,7 +35,7 @@ const server = http.createServer(async (req, res) => {
 
   try {
     const visits = await client.incr('visits');
-    send(res, 200, `Hello from Docker v2! Visits: ${visits}`);
+    send(res, 200, `Hello from Docker v3! :) Visits: ${visits}`);
   } catch (err) {
     console.error('Counter failed:', err.message);
     send(res, 500, 'Internal server error');
