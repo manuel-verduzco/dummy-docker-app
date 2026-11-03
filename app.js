@@ -24,6 +24,11 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, 'ok');
   }
 
+  // Browsers also request /favicon.ico etc.; only "/" counts as a visit.
+  if (req.url !== '/') {
+    return send(res, 404, 'Not found');
+  }
+
   if (!client.isReady) {
     return send(res, 503, 'Service unavailable: cannot reach Redis');
   }
