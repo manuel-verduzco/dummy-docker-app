@@ -66,6 +66,14 @@ docker compose -f docker-compose.prod.yml down      # old stack, if running; kee
 echo "DOMAIN=<your-hostname>" > .env
 ```
 
+Add the login session secret too. Generate it on the VM so it never exists anywhere else:
+
+```bash
+echo "SESSION_SECRET=$(openssl rand -hex 32)" >> .env
+```
+
+If it's missing, `docker compose` refuses to start and the deploy job fails; the running site is left untouched. To rotate it later, replace that line and redeploy (everyone gets logged out).
+
 The first automated deploy copies the new compose file and `Caddyfile` for you. To start it by hand instead:
 
 ```bash

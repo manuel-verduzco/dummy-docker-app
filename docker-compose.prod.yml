@@ -1,8 +1,10 @@
 # Production (Azure VM): pulls the prebuilt image from ghcr.io and serves it over HTTPS.
 #   docker compose -f docker-compose.prod.yml up -d
 # Reads DOMAIN and IMAGE_TAG from a .env file next to this one (on the VM only).
-#   DOMAIN    e.g. myname.<region>.cloudapp.azure.com  (required)
-#   IMAGE_TAG commit SHA or "latest"                   (default: latest)
+#   DOMAIN            e.g. myname.<region>.cloudapp.azure.com  (required)
+#   SESSION_SECRET    random string that signs login cookies   (required, keep private)
+#   REGISTRATION_OPEN "false" to stop new sign-ups             (default: true)
+#   IMAGE_TAG         commit SHA or "latest"                   (default: latest)
 services:
   caddy:
     image: caddy:2-alpine
@@ -26,6 +28,8 @@ services:
       - "3000"
     environment:
       REDIS_URL: redis://redis:6379
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env}
+      REGISTRATION_OPEN: ${REGISTRATION_OPEN:-true}
     depends_on:
       - redis
     restart: unless-stopped

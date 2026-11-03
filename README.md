@@ -6,12 +6,25 @@ A tiny Node.js app used to practice a container deployment workflow:
 
 The app counts visits in Redis and replies `Hello from Docker! Visits: N`.
 
-| Endpoint  | Behavior                                              |
-|-----------|-------------------------------------------------------|
-| `/`       | Increments the counter in Redis and returns it        |
-| `/health` | Returns `ok`; never touches Redis or the counter      |
+| Endpoint              | Behavior                                                         |
+|-----------------------|------------------------------------------------------------------|
+| `/`                   | Increments the global counter in Redis; shows login state        |
+| `/health`             | Returns `ok`; never touches Redis, the counter, or sessions      |
+| `/register`, `/login` | Create an account / log in (HTML forms)                          |
+| `/dashboard`          | Login required; shows a per-user visit counter                   |
+| `/logout` (POST)      | Ends the session                                                 |
 
-If Redis is unreachable, `/` returns `503` instead of crashing.
+If Redis is unreachable, pages return `503` instead of crashing.
+
+## How login works
+
+- Users are stored in Redis (`user:<name>`) with a **bcrypt** password hash, never the password.
+- Sessions live in Redis; the browser only holds a random session ID in an `HttpOnly`, `SameSite=Lax` cookie (`Secure` over HTTPS). The ID is regenerated on login.
+- Failed logins are limited to 5 per IP per 15 minutes. Login errors never say whether the username exists.
+- `SESSION_SECRET` signs the cookie. It comes from the environment (the VM's `.env`), never from a file in the repo. Locally a random one is generated per start.
+- Set `REGISTRATION_OPEN=false` to close sign-ups.
+
+This is a learning project: there's no email verification, password reset, or HTTPS-only enforcement beyond Caddy.
 
 ## Run locally
 
