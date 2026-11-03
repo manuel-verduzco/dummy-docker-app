@@ -72,7 +72,15 @@ Add the login session secret too. Generate it on the VM so it never exists anywh
 echo "SESSION_SECRET=$(openssl rand -hex 32)" >> .env
 ```
 
-If it's missing, `docker compose` refuses to start and the deploy job fails; the running site is left untouched. To rotate it later, replace that line and redeploy (everyone gets logged out).
+User accounts now live in a PostgreSQL container, so the VM also needs its password. Generate it the same way, and **set it before the first deploy of this version**:
+
+```bash
+echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)" >> .env
+```
+
+PostgreSQL reads this variable only when it first creates its data volume. Changing the line later does **not** change the database's password, and the app would then fail to log in to it. Treat it as set-once, and don't regenerate it.
+
+If either is missing, `docker compose` refuses to start and the deploy job fails; the running site is left untouched. To rotate the session secret later, replace that line and redeploy (everyone gets logged out).
 
 The first automated deploy copies the new compose file and `Caddyfile` for you. To start it by hand instead:
 
@@ -108,12 +116,41 @@ docker compose -f docker-compose.prod.yml up -d
 
 The pin lives in `.env`, so it sticks until the next automatic deploy overwrites it. Note that **the next push to `main` deploys the new commit again**; to roll back permanently, revert the bad commit in git (`git revert <sha>`) and push.
 
+## 4. Moving existing accounts from Redis to PostgreSQL (once)
+
+Accounts created before the database existed live only in Redis. After the first deploy of this version, copy them over:
+
+```bash
+cd ~/dummy-docker-app
+docker compose -f docker-compose.prod.yml exec web node scripts/import-redis-users.js
+```
+
+It's safe to run twice: existing accounts are skipped, and nothing is deleted from Redis, which stays as a backup of the old accounts. Until you run it, those people can't log in.
+
+## 5. Backing up and restoring the user database
+
+Redis can be rebuilt; the `users` table cannot. Take a backup (a plain SQL file) and keep a copy **off the VM**:
+
+```bash
+cd ~/dummy-docker-app
+docker compose -f docker-compose.prod.yml exec -T db pg_dump -U app -d app --clean --if-exists | gzip > users-$(date +%F).sql.gz
+```
+
+To restore (this replaces the current table contents):
+
+```bash
+gunzip -c users-2026-01-31.sql.gz | docker compose -f docker-compose.prod.yml exec -T db psql -U app -d app -q
+```
+
+A backup you have never restored is a hope, not a backup: try the restore on a copy first. `down -v` deletes the `pg-data` volume and every account in it; plain `down` keeps it.
+
 ## Troubleshooting
 
 ```bash
 docker compose -f docker-compose.prod.yml ps
 docker compose -f docker-compose.prod.yml logs --tail 30 caddy   # certificate problems show here
 docker compose -f docker-compose.prod.yml logs --tail 30 web
+docker compose -f docker-compose.prod.yml logs --tail 30 db   # database startup or login problems
 ```
 
 - **Caddy can't get a certificate:** check that port 443 *and* 80 are open in the NSG and the DNS name resolves to the VM's IP (`nslookup <hostname>`).

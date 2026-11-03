@@ -1,5 +1,8 @@
 # Local development: builds the image from source.
-#   docker compose up --build
+#   1. Once, create a file named .env next to this one (it is git-ignored) containing:
+#        POSTGRES_PASSWORD=any-value-you-like
+#      (or set $env:POSTGRES_PASSWORD in PowerShell for one session)
+#   2. docker compose up --build
 services:
   web:
     build: .
@@ -7,8 +10,33 @@ services:
       - "80:3000"
     environment:
       REDIS_URL: redis://redis:6379
+      # The pg library reads these standard variables, so no password sits in a connection string.
+      PGHOST: db
+      PGUSER: app
+      PGDATABASE: app
+      PGPASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD first (see the top of this file)}"
     depends_on:
-      - redis
+      redis:
+        condition: service_started
+      db:
+        condition: service_healthy
 
   redis:
     image: redis:7-alpine
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_DB: app
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD first (see the top of this file)}"
+    volumes:
+      - pg-data:/var/lib/postgresql/data # survives restarts; `docker compose down -v` deletes it
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pg-data:

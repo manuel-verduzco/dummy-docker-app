@@ -3,6 +3,7 @@ const express = require('express');
 const session = require('express-session');
 const RedisStore = require('connect-redis').default;
 const bcrypt = require('bcryptjs');
+const db = require('./db');
 const { createClient } = require('redis');
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -96,7 +97,7 @@ app.get('/', async (req, res) => {
   res.send(
     page(
       'Home',
-      `<h1>Hello from Docker v3! :)</h1><p>Visits: ${visits}</p>` +
+      `<h1>Hello from Docker v4!</h1><p>Visits: ${visits}</p>` +
         (user
           ? `<p>Logged in as <b>${esc(user)}</b>. <a href="/dashboard">Dashboard</a></p>` +
             `<form method="post" action="/logout"><button>Log out</button></form>`
@@ -122,8 +123,8 @@ app.post('/register', async (req, res) => {
   if (password.length < 8 || Buffer.byteLength(password) > 72) return fail(400, 'Password: 8-72 characters.');
 
   const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
-  // HSETNX is atomic: two simultaneous sign-ups for one name can't both succeed.
-  const created = await client.hSetNX(`user:${username}`, 'hash', hash);
+  // The database's unique index decides: two simultaneous sign-ups for one name can't both succeed.
+  const created = await db.createUser(username, hash);
   if (!created) return fail(409, 'That username is taken.');
   res.redirect('/login?registered=1');
 });
@@ -145,7 +146,7 @@ app.post('/login', async (req, res, next) => {
     return reject(429, 'Too many failed attempts. Try again in 15 minutes.');
   }
 
-  const stored = USERNAME_RE.test(username) ? await client.hGet(`user:${username}`, 'hash') : null;
+  const stored = USERNAME_RE.test(username) ? await db.getPasswordHash(username) : null;
   const ok = await bcrypt.compare(password.slice(0, 72), stored || DUMMY_HASH);
   if (!stored || !ok) {
     const fails = await client.incr(failKey);
@@ -155,6 +156,7 @@ app.post('/login', async (req, res, next) => {
   }
 
   await client.del(failKey);
+  await db.recordLogin(username);
   // New session ID on login prevents session fixation.
   req.session.regenerate((err) => {
     if (err) return next(err);
@@ -164,7 +166,11 @@ app.post('/login', async (req, res, next) => {
 });
 
 app.get('/dashboard', requireLogin, async (req, res) => {
-  const mine = await client.hIncrBy(`user:${req.session.user}`, 'visits', 1);
+  const mine = await db.incrementVisits(req.session.user);
+  if (mine === null) {
+    // The account was deleted while this session was still open: end the session.
+    return req.session.destroy(() => res.clearCookie('sid').redirect('/login'));
+  }
   res.send(
     page(
       'Dashboard',
@@ -185,20 +191,39 @@ app.post('/logout', (req, res, next) => {
 
 app.use((req, res) => res.status(404).type('text').send('Not found\n'));
 
+// Errors that mean "cannot reach the database right now" (as opposed to a bug in our code).
+const DB_UNREACHABLE = new Set(['ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'ECONNRESET', '57P01', '57P03', '08001', '08006']);
+const dbUnreachable = (err) =>
+  DB_UNREACHABLE.has(err.code) || /connection terminated|timeout exceeded when trying to connect/i.test(err.message);
+
 app.use((err, req, res, next) => {
   console.error('Request failed:', err.message);
   if (res.headersSent) return next(err);
+  if (dbUnreachable(err)) return res.status(503).type('text').send('Service unavailable: cannot reach the database\n');
   res.status(500).type('text').send('Internal server error\n');
 });
 
-const server = app.listen(PORT, () => console.log(`Listening on ${PORT}`));
+// Wait for the database and apply any pending migrations before taking requests.
+// If it never comes up we exit, and Docker's restart policy tries again.
+let server;
+db.waitAndMigrate()
+  .then(() => {
+    server = app.listen(PORT, () => console.log(`Listening on ${PORT}`));
+  })
+  .catch((err) => {
+    console.error('Could not prepare the database:', err.message);
+    process.exit(1);
+  });
 
 // Docker sends SIGTERM on `docker stop`; close cleanly instead of being killed.
 const shutdown = () => {
-  server.close(async () => {
+  const finish = async () => {
     if (client.isOpen) await client.quit().catch(() => {});
+    await db.pool.end().catch(() => {});
     process.exit(0);
-  });
+  };
+  if (server) server.close(finish);
+  else finish();
 };
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);

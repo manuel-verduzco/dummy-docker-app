@@ -3,3 +3,7 @@ npm-debug.log*
 .env
 .env.*
 .DS_Store
+
+# Database backups contain password hashes: never commit them.
+backup*.sql
+*.sql.gz
