@@ -1,0 +1,14 @@
+# Local development: builds the image from source.
+#   docker compose up --build
+services:
+  web:
+    build: .
+    ports:
+      - "80:3000"
+    environment:
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine

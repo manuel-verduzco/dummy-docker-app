@@ -1,0 +1,15 @@
+{
+  "name": "dummy-docker-app",
+  "version": "1.0.0",
+  "private": true,
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "redis": "^4.6.0"
+  }
+}
