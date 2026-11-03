@@ -7,7 +7,9 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
-COPY app.js ./
+COPY app.js db.js ./
+COPY migrations ./migrations
+COPY scripts ./scripts
 
 # The official node image ships a non-root "node" user.
 USER node

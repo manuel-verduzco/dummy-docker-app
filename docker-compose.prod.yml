@@ -3,6 +3,7 @@
 # Reads DOMAIN and IMAGE_TAG from a .env file next to this one (on the VM only).
 #   DOMAIN            e.g. myname.<region>.cloudapp.azure.com  (required)
 #   SESSION_SECRET    random string that signs login cookies   (required, keep private)
+#   POSTGRES_PASSWORD password of the user database            (required, keep private)
 #   REGISTRATION_OPEN "false" to stop new sign-ups             (default: true)
 #   IMAGE_TAG         commit SHA or "latest"                   (default: latest)
 services:
@@ -30,8 +31,15 @@ services:
       REDIS_URL: redis://redis:6379
       SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env}
       REGISTRATION_OPEN: ${REGISTRATION_OPEN:-true}
+      PGHOST: db
+      PGUSER: app
+      PGDATABASE: app
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     depends_on:
-      - redis
+      redis:
+        condition: service_started
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
   redis:
@@ -41,7 +49,24 @@ services:
       - redis-data:/data
     restart: unless-stopped
 
+  # User accounts live here. No published ports: only the web container can reach it.
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_DB: app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
 volumes:
   redis-data:
+  pg-data:
   caddy-data:
   caddy-config:
