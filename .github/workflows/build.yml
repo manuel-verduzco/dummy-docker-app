@@ -62,8 +62,14 @@ jobs:
           VM_KNOWN_HOSTS: ${{ secrets.VM_KNOWN_HOSTS }}
         run: |
           install -m 700 -d ~/.ssh
-          printf '%s\n' "$VM_SSH_KEY" > ~/.ssh/id_ed25519
+          # Strip Windows CRs (common when the key was pasted from Windows) and ensure a final newline.
+          printf '%s\n' "$VM_SSH_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
+          # Fail early with a clear message if the secret isn't a valid private key.
+          ssh-keygen -y -f ~/.ssh/id_ed25519 > /dev/null || {
+            echo "::error::VM_SSH_KEY is not a valid private key. Re-create the secret from the full contents of the private key file."
+            exit 1
+          }
           # Pinned host key: refuses to connect if the server isn't the expected VM.
           printf '%s\n' "$VM_KNOWN_HOSTS" > ~/.ssh/known_hosts
 
