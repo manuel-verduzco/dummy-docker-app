@@ -97,7 +97,7 @@ app.get('/', async (req, res) => {
   res.send(
     page(
       'Home',
-      `<h1>Hello from Docker v3! :)</h1><p>Visits: ${visits}</p>` +
+      `<h1>Hello from Docker v4!</h1><p>Visits: ${visits}</p>` +
         (user
           ? `<p>Logged in as <b>${esc(user)}</b>. <a href="/dashboard">Dashboard</a></p>` +
             `<form method="post" action="/logout"><button>Log out</button></form>`
