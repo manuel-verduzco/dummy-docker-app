@@ -38,3 +38,54 @@ jobs:
             ${{ env.IMAGE }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy:
+    # Runs only after the image is built and pushed.
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Never run two deploys at once; a newer push waits for the current one.
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_USER: ${{ secrets.VM_USER }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up SSH
+        # Secrets go through env vars, never interpolated into the script text.
+        env:
+          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          VM_KNOWN_HOSTS: ${{ secrets.VM_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$VM_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          # Pinned host key: refuses to connect if the server isn't the expected VM.
+          printf '%s\n' "$VM_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Copy compose + Caddy config to the VM
+        run: |
+          scp docker-compose.prod.yml Caddyfile "$VM_USER@$VM_HOST:~/dummy-docker-app/"
+
+      - name: Pull and restart on the VM
+        run: |
+          ssh "$VM_USER@$VM_HOST" bash -se <<'EOF'
+            set -euo pipefail
+            cd ~/dummy-docker-app
+            # Pin the deployed version in .env (keeps DOMAIN and other lines intact).
+            touch .env
+            grep -v '^IMAGE_TAG=' .env > .env.new || true
+            echo "IMAGE_TAG=${{ github.sha }}" >> .env.new
+            mv .env.new .env
+            docker compose -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            docker image prune -f
+          EOF
+
+      - name: Verify
+        run: |
+          ssh "$VM_USER@$VM_HOST" 'sleep 5; docker compose -f ~/dummy-docker-app/docker-compose.prod.yml ps'

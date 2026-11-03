@@ -1,11 +1,29 @@
-# Production (Azure VM): pulls the prebuilt image from ghcr.io.
-#   IMAGE_TAG=latest docker compose -f docker-compose.prod.yml up -d
-# IMAGE_TAG defaults to "latest"; set it to a commit SHA to pin or roll back.
+# Production (Azure VM): pulls the prebuilt image from ghcr.io and serves it over HTTPS.
+#   docker compose -f docker-compose.prod.yml up -d
+# Reads DOMAIN and IMAGE_TAG from a .env file next to this one (on the VM only).
+#   DOMAIN    e.g. myname.<region>.cloudapp.azure.com  (required)
+#   IMAGE_TAG commit SHA or "latest"                   (default: latest)
 services:
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data        # certificates; keep this so they aren't re-requested
+      - caddy-config:/config
+    depends_on:
+      - web
+    restart: unless-stopped
+
   web:
     image: ghcr.io/manuel-verduzco/dummy-docker-app:${IMAGE_TAG:-latest}
-    ports:
-      - "80:3000"
+    # No published ports: only Caddy can reach the app, over the compose network.
+    expose:
+      - "3000"
     environment:
       REDIS_URL: redis://redis:6379
     depends_on:
@@ -21,3 +39,5 @@ services:
 
 volumes:
   redis-data:
+  caddy-data:
+  caddy-config:

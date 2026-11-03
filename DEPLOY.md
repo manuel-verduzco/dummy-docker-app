@@ -1,80 +1,114 @@
 # Deploying to the Azure VM
 
-Target: Ubuntu 24.04 x64, Docker + Compose v2 installed, user `azureuser`, ports 22 and 80 open.
+Target: Ubuntu 24.04 x64, Docker + Compose v2, user `azureuser`.
 Image: `ghcr.io/manuel-verduzco/dummy-docker-app`
 
-No secrets live in this repo. If you need a token (see step 0), type it on the VM only.
+The stack (`docker-compose.prod.yml`) has three containers:
 
-## 0. One-time: make the image pullable
+- `caddy`: terminates HTTPS (free Let's Encrypt certificate, auto-renewed) and proxies to the app
+- `web`: the Node app (not exposed directly)
+- `redis`: the counter, with a persistent volume
 
-GitHub creates new ghcr.io packages as **private**, even from a public repo. Either:
+**No secrets live in this repo.** The SSH key, VM address, and host key are GitHub Actions secrets; the domain is in a `.env` file on the VM.
 
-- **Easiest for this test:** after the first workflow run, go to
-  GitHub → your profile → Packages → `dummy-docker-app` → Package settings →
-  Change visibility → Public. The VM then needs no login.
-- **Or keep it private:** create a classic personal access token with only the `read:packages` scope, then on the VM:
-  ```bash
-  docker login ghcr.io -u manuel-verduzco
-  ```
-  Paste the token at the password prompt. It is stored in `~/.docker/config.json` on the VM, never in the repo.
+## 0. One-time setup
 
-## 1. First deployment
+### 0a. Make the image pullable
+GitHub creates ghcr.io packages as private. Set it to Public:
+GitHub → your profile → Packages → `dummy-docker-app` → Package settings → Change visibility → Public.
+
+### 0b. Azure: DNS name and port 443
+In the Azure portal, for the VM `vm-docker-test`:
+
+1. **Public IP → Configuration → DNS name label**: pick a name, e.g. `dummy-docker-test`.
+   Your hostname becomes `dummy-docker-test.<region>.cloudapp.azure.com` (shown on the IP's overview page).
+   Tip: set the IP **Assignment** to *Static* so it never changes.
+2. **Networking → Network security group → Add inbound rule**: allow **TCP 443** (80 and 22 are already open).
+   Caddy needs 80 *and* 443 reachable from the internet to get its certificate.
+
+### 0c. A dedicated deploy key
+On your PC (PowerShell). This key is only for deploying; don't reuse your personal key. Leave the passphrase empty:
 
 ```bash
-ssh azureuser@<VM_PUBLIC_IP>
+ssh-keygen -t ed25519 -f $HOME\.ssh\dummy_deploy -C "github-actions-deploy"
+```
 
-mkdir -p ~/dummy-docker-app && cd ~/dummy-docker-app
+Authorize its **public** half on the VM:
+
+```bash
+type $HOME\.ssh\dummy_deploy.pub | ssh azureuser@<VM_IP_OR_HOSTNAME> "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"
+```
+
+Get the VM's host key (so GitHub can verify it's connecting to the right server):
+
+```bash
+ssh-keyscan -t ed25519 <VM_HOSTNAME>
+```
+
+### 0d. GitHub secrets
+Repo → Settings → Secrets and variables → Actions → New repository secret. Add four:
+
+| Secret | Value |
+|---|---|
+| `VM_HOST` | the VM hostname from 0b |
+| `VM_USER` | `azureuser` |
+| `VM_SSH_KEY` | the full contents of `dummy_deploy` (the **private** key, including the BEGIN/END lines) |
+| `VM_KNOWN_HOSTS` | the full output line of `ssh-keyscan` from 0c |
+
+Paste these only into the GitHub form. Never commit them or paste them into a file in the repo.
+
+### 0e. Prepare the VM
+Stop anything already using ports 80/443 (for example the previous stack), then set the domain:
+
+```bash
+cd ~/dummy-docker-app
+docker compose -f docker-compose.prod.yml down      # old stack, if running; keeps volumes
+echo "DOMAIN=<your-hostname>" > .env
+```
+
+The first automated deploy copies the new compose file and `Caddyfile` for you. To start it by hand instead:
+
+```bash
 curl -fsSLO https://raw.githubusercontent.com/manuel-verduzco/dummy-docker-app/main/docker-compose.prod.yml
-
-docker compose -f docker-compose.prod.yml pull
+curl -fsSLO https://raw.githubusercontent.com/manuel-verduzco/dummy-docker-app/main/Caddyfile
 docker compose -f docker-compose.prod.yml up -d
-docker compose -f docker-compose.prod.yml ps
 ```
 
-Verify (from the VM, then from your PC at `http://<VM_PUBLIC_IP>/`):
+## 1. Automatic deploys (the normal flow)
 
-```bash
-curl http://localhost/health    # ok
-curl http://localhost/          # Hello from Docker! Visits: 1
-```
+Push to `main` → the **build** job builds and pushes the image → the **deploy** job SSHes into the VM, writes `IMAGE_TAG=<commit SHA>` into `.env`, and runs `pull` + `up -d`.
 
-## 2. Update to a new version
+Watch it in the Actions tab. Then check `https://<your-hostname>/`.
 
-Push to `main`, wait for the GitHub Action to go green, then on the VM:
+## 2. Manual update (if you need it)
 
 ```bash
 cd ~/dummy-docker-app
 docker compose -f docker-compose.prod.yml pull
 docker compose -f docker-compose.prod.yml up -d
-docker image prune -f      # optional: remove old unused layers
 ```
-
-`up -d` recreates only containers whose image changed. The Redis volume keeps the counter.
 
 ## 3. Roll back to a previous version
 
-Every build is tagged with its full commit SHA. Find the SHA of a good commit
-(`git log --oneline` locally, or the Actions run list, or the package's Versions page; use the full 40-character SHA).
+Every build is tagged with its full commit SHA (`git log --format="%H %s"`).
 
 ```bash
 cd ~/dummy-docker-app
-IMAGE_TAG=<full-commit-sha> docker compose -f docker-compose.prod.yml up -d
+sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=<full-commit-sha>/' .env
+docker compose -f docker-compose.prod.yml up -d
 ```
 
-If the tag isn't on the VM yet, Compose pulls it. Check what's running:
+The pin lives in `.env`, so it sticks until the next automatic deploy overwrites it. Note that **the next push to `main` deploys the new commit again**; to roll back permanently, revert the bad commit in git (`git revert <sha>`) and push.
+
+## Troubleshooting
 
 ```bash
 docker compose -f docker-compose.prod.yml ps
-docker inspect --format '{{.Config.Image}}' dummy-docker-app-web-1
+docker compose -f docker-compose.prod.yml logs --tail 30 caddy   # certificate problems show here
+docker compose -f docker-compose.prod.yml logs --tail 30 web
 ```
 
-`IMAGE_TAG` only applies to that command. To make a pin survive future commands, put `IMAGE_TAG=<sha>` in a `.env` file next to the compose file (on the VM only), and delete the line to return to `latest`.
-
-## Useful commands
-
-```bash
-docker compose -f docker-compose.prod.yml logs -f web
-docker compose -f docker-compose.prod.yml restart web
-docker compose -f docker-compose.prod.yml down        # stop; keeps the Redis volume
-docker compose -f docker-compose.prod.yml down -v     # stop AND delete the counter data
-```
+- **Caddy can't get a certificate:** check that port 443 *and* 80 are open in the NSG and the DNS name resolves to the VM's IP (`nslookup <hostname>`).
+- **"port is already allocated":** another container (e.g. an old stack) holds port 80/443; `docker ps`, then remove it.
+- **Deploy job fails at SSH:** check the four secrets, and that port 22 allows GitHub's runners (they come from many IPs, so don't restrict 22 to your own IP).
+- `down -v` deletes the Redis counter **and** the certificates. Use plain `down` to keep them.

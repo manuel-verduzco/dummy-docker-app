@@ -1,0 +1,5 @@
+# Caddy obtains and renews a Let's Encrypt certificate for $DOMAIN automatically,
+# redirects HTTP to HTTPS, and proxies requests to the app container.
+{$DOMAIN} {
+	reverse_proxy web:3000
+}

@@ -26,8 +26,9 @@ Then open http://localhost (port 80 maps to the app's port 3000) and refresh to 
 ## Files
 
 - `docker-compose.yml`: local dev, builds from source.
-- `docker-compose.prod.yml`: for the VM, uses the ghcr.io image with a persistent Redis volume.
-- `.github/workflows/build.yml`: builds `linux/amd64` and pushes `latest` and `<commit SHA>` tags on every push to `main`.
-- `DEPLOY.md`: step-by-step VM deployment, update, and rollback.
+- `docker-compose.prod.yml`: for the VM. Uses the ghcr.io image, a persistent Redis volume, and Caddy for automatic HTTPS.
+- `Caddyfile`: Caddy's reverse-proxy config (hostname comes from `DOMAIN` in the VM's `.env`).
+- `.github/workflows/build.yml`: on every push to `main`, builds `linux/amd64`, pushes `latest` and `<commit SHA>` tags, then deploys to the VM over SSH.
+- `DEPLOY.md`: one-time setup (DNS, port 443, deploy key, secrets), updates, and rollback.
 
 Image: `ghcr.io/manuel-verduzco/dummy-docker-app`
