@@ -55,6 +55,18 @@ Open http://localhost (port 80 maps to the app's port 3000), register, log in, a
 docker compose exec db psql -U app -d app -c "select id, username, visits, created_at, last_login_at from users"
 ```
 
+To back up and restore the local database from Windows PowerShell, dump inside the container and copy the file out (PowerShell's `>` and pipes can corrupt the encoding):
+
+```powershell
+docker compose exec -T db sh -c "pg_dump -U app -d app --clean --if-exists > /tmp/backup.sql"
+docker compose cp db:/tmp/backup.sql ./backup.sql
+# restore:
+docker compose cp ./backup.sql db:/tmp/backup.sql
+docker compose exec db psql -U app -d app -q -f /tmp/backup.sql
+```
+
+The file holds password hashes, so delete it when you're done. (The Linux commands for the VM are in DEPLOY.md.)
+
 Your accounts persist across restarts in the `pg-data` volume. `docker compose down -v` deletes that volume, and with it every account. `POSTGRES_PASSWORD` is only read when the volume is first created: changing it later does not change the database's password, so either keep it the same or delete the volume.
 
 ## Files
